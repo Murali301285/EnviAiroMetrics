@@ -36,4 +36,4 @@ logs/
 *.sw?
 
 # Deployment
-DeploymentPackage/
+deployment_package/

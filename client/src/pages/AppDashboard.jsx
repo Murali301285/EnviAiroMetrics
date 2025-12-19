@@ -72,6 +72,7 @@ const AppDashboard = () => {
     // Chart Refs for Download
     const h2sAqiChartRef = useRef(null);
     const h2sPpmChartRef = useRef(null);
+    const odourChartRef = useRef(null);
 
     useEffect(() => {
         fetchAppName();
@@ -267,6 +268,14 @@ const AppDashboard = () => {
     const h2sAqiValues = chartData.map(d => d.h2s_aqi || 0);
     const h2sPpmValues = chartData.map(d => d.h2s_ppm || 0);
 
+    // Odour Index Data Parsing (from revText)
+    const odourValues = chartData.map(d => {
+        if (!d.revText) return 0;
+        // Search for "Odour Index:X" or "Odour Index:X.XX"
+        const match = d.revText.match(/Odour Index:([\d.]+)/i);
+        return match ? parseFloat(match[1]) : 0;
+    });
+
     const commonOptions = {
         responsive: true,
         maintainAspectRatio: false,
@@ -411,6 +420,94 @@ const AppDashboard = () => {
         }
     };
 
+    // Odour Index Chart Config
+    const odourChartData = {
+        labels: chartLabels,
+        datasets: [{
+            label: 'Odour Index',
+            data: odourValues,
+            borderColor: '#8b5cf6', // Violet/Purple
+            backgroundColor: 'rgba(139, 92, 246, 0.1)',
+            fill: true,
+            tension: 0.4,
+            pointRadius: 2,
+        }],
+    };
+
+    const odourChartOptions = {
+        ...commonOptions,
+        scales: {
+            ...commonOptions.scales,
+            y: {
+                ...commonOptions.scales.y,
+                max: Math.max(...odourValues, 100) + 10,
+                backgroundColor: (context) => {
+                    const chart = context.chart;
+                    const { ctx, chartArea } = chart;
+                    if (!chartArea) return;
+
+                    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                    const maxY = Math.max(...odourValues, 100) + 10;
+
+                    // Zones: 0-20 (Good), 21-40 (Fair), 41-60 (Moderate), 61-80 (Poor), 81-100 (Very Poor)
+                    const p20 = 20 / maxY;
+                    const p40 = 40 / maxY;
+                    const p60 = 60 / maxY;
+                    const p80 = 80 / maxY;
+                    const p100 = 100 / maxY;
+
+                    // Green -> Blue -> Yellow -> Orange -> Red
+                    // Note: addColorStop positions are 0.0 to 1.0 (bottom to top)
+
+                    // 0-20 Good (Green)
+                    gradient.addColorStop(0, 'rgba(34, 197, 94, 0.1)');
+                    gradient.addColorStop(p20, 'rgba(34, 197, 94, 0.1)');
+
+                    // 21-40 Fair (Blue)
+                    gradient.addColorStop(p20, 'rgba(59, 130, 246, 0.1)');
+                    gradient.addColorStop(p40, 'rgba(59, 130, 246, 0.1)');
+
+                    // 41-60 Moderate (Yellow)
+                    gradient.addColorStop(p40, 'rgba(234, 179, 8, 0.1)');
+                    gradient.addColorStop(p60, 'rgba(234, 179, 8, 0.1)');
+
+                    // 61-80 Poor (Orange)
+                    gradient.addColorStop(p60, 'rgba(249, 115, 22, 0.1)');
+                    gradient.addColorStop(p80, 'rgba(249, 115, 22, 0.1)');
+
+                    // 81-100 Very Poor (Red)
+                    gradient.addColorStop(p80, 'rgba(239, 68, 68, 0.1)');
+                    gradient.addColorStop(p100, 'rgba(239, 68, 68, 0.1)');
+
+                    // > 100 (Keep Red)
+                    gradient.addColorStop(1, 'rgba(239, 68, 68, 0.1)');
+
+                    return gradient;
+                }
+            }
+        },
+        plugins: {
+            ...commonOptions.plugins,
+            legend: {
+                ...commonOptions.plugins.legend,
+                labels: {
+                    ...commonOptions.plugins.legend.labels,
+                    generateLabels: (chart) => {
+                        const original = ChartJS.defaults.plugins.legend.labels.generateLabels(chart);
+                        return [
+                            ...original,
+                            { text: 'Good (1-20)', fillStyle: 'rgba(34, 197, 94, 0.5)', strokeStyle: 'transparent' },
+                            { text: 'Fair (21-40)', fillStyle: 'rgba(59, 130, 246, 0.5)', strokeStyle: 'transparent' },
+                            { text: 'Mod (41-60)', fillStyle: 'rgba(234, 179, 8, 0.5)', strokeStyle: 'transparent' },
+                            { text: 'Poor (61-80)', fillStyle: 'rgba(249, 115, 22, 0.5)', strokeStyle: 'transparent' },
+                            { text: 'V.Poor (81-100)', fillStyle: 'rgba(239, 68, 68, 0.5)', strokeStyle: 'transparent' },
+                        ];
+                    }
+                }
+            }
+        }
+    };
+
     const h2sPpmChartData = {
         labels: chartLabels,
         datasets: [{
@@ -515,7 +612,133 @@ const AppDashboard = () => {
                                 </div>
                                 <div className="h-[350px]">
                                     {rawData.length > 0 ? (
-                                        <Line ref={h2sAqiChartRef} options={h2sAqiChartOptions} data={h2sAqiChartData} />
+                                        <Line
+                                            ref={h2sAqiChartRef}
+                                            options={h2sAqiChartOptions}
+                                            data={h2sAqiChartData}
+                                            plugins={[{
+                                                id: 'h2sAqiSeverityLines',
+                                                afterDatasetsDraw(chart) {
+                                                    const { ctx, chartArea: { left, right, top, bottom }, scales: { y } } = chart;
+
+                                                    const levels = [
+                                                        { value: 50, label: 'Good (0-50)', color: '#15803d' }, // green-700
+                                                        { value: 100, label: 'Satisfactory (51-100)', color: '#1d4ed8' }, // blue-700
+                                                    ];
+
+                                                    ctx.save();
+                                                    ctx.textAlign = 'right';
+                                                    ctx.textBaseline = 'bottom';
+                                                    ctx.font = 'bold 11px sans-serif';
+
+                                                    // Draw standard levels
+                                                    levels.forEach(level => {
+                                                        const yPos = y.getPixelForValue(level.value);
+
+                                                        if (yPos >= top && yPos <= bottom) {
+                                                            ctx.beginPath();
+                                                            ctx.lineWidth = 1;
+                                                            ctx.strokeStyle = level.color;
+                                                            ctx.globalAlpha = 0.6;
+                                                            ctx.setLineDash([6, 4]);
+                                                            ctx.moveTo(left, yPos);
+                                                            ctx.lineTo(right, yPos);
+                                                            ctx.stroke();
+
+                                                            ctx.fillStyle = level.color;
+                                                            ctx.globalAlpha = 1.0;
+                                                            ctx.fillText(level.label, right - 10, yPos - 4);
+                                                        }
+                                                    });
+
+                                                    // Special handling for Poor/Severe (>100)
+                                                    // We render this label near the top if the scale goes above 100
+                                                    if (y.max > 100) {
+                                                        // Valid position just above the 100 line or at the chart top?
+                                                        // Let's put it at y=105 or just below the top edge if visible
+                                                        const poorLabelValue = Math.max(110, (y.max + 100) / 2); // Position it somewhere in the red zone
+                                                        // Actually, just drawing it attached to the top of the chart might be safer if max is varying
+
+                                                        // Let's try drawing a line/label at 101 or slightly above 100 line
+                                                        const y100 = y.getPixelForValue(100);
+                                                        if (y100 >= top) {
+                                                            ctx.fillStyle = '#b91c1c'; // red-700
+                                                            ctx.fillText('Poor/Severe (>100)', right - 10, y100 - 20); // 20px above the 100 line
+                                                        }
+                                                    }
+
+                                                    ctx.restore();
+                                                }
+                                            }]}
+                                        />
+                                    ) : (
+                                        <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 rounded-lg">No data available</div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="glass-panel p-6">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-lg font-semibold text-violet-600 flex items-center gap-2">
+                                        <span className="w-1 h-6 bg-violet-600 rounded-full"></span>
+                                        Odour Index Dashboard
+                                    </h3>
+                                    <button
+                                        onClick={() => downloadChartAsImage(odourChartRef, 'odour-chart')}
+                                        className="flex items-center gap-2 px-3 py-1.5 bg-violet-50 text-violet-600 rounded-lg hover:bg-violet-100 transition-colors text-sm font-medium"
+                                    >
+                                        <Download size={16} /> Download PNG
+                                    </button>
+                                </div>
+                                <div className="h-[350px]">
+                                    {rawData.length > 0 ? (
+                                        <Line
+                                            ref={odourChartRef}
+                                            options={odourChartOptions}
+                                            data={odourChartData}
+                                            plugins={[{
+                                                id: 'odourSeverityLines',
+                                                afterDatasetsDraw(chart) {
+                                                    const { ctx, chartArea: { left, right, top, bottom }, scales: { y } } = chart;
+
+                                                    const levels = [
+                                                        { value: 20, label: 'Good (1-20)', color: '#15803d' }, // green-700
+                                                        { value: 40, label: 'Fair (21-40)', color: '#1d4ed8' }, // blue-700
+                                                        { value: 60, label: 'Moderate (41-60)', color: '#a16207' }, // yellow-700
+                                                        { value: 80, label: 'Poor (61-80)', color: '#c2410c' }, // orange-700
+                                                        { value: 100, label: 'Very Poor (81-100)', color: '#b91c1c' } // red-700
+                                                    ];
+
+                                                    ctx.save();
+                                                    ctx.textAlign = 'right';
+                                                    ctx.textBaseline = 'bottom';
+                                                    ctx.font = 'bold 11px sans-serif';
+
+                                                    levels.forEach(level => {
+                                                        const yPos = y.getPixelForValue(level.value);
+
+                                                        // Only draw if within visible chart area (approx)
+                                                        if (yPos >= top && yPos <= bottom) {
+                                                            // Line
+                                                            ctx.beginPath();
+                                                            ctx.lineWidth = 1;
+                                                            ctx.strokeStyle = level.color;
+                                                            ctx.globalAlpha = 0.6;
+                                                            ctx.setLineDash([6, 4]); // Dashed line
+                                                            ctx.moveTo(left, yPos);
+                                                            ctx.lineTo(right, yPos);
+                                                            ctx.stroke();
+
+                                                            // Label
+                                                            ctx.fillStyle = level.color;
+                                                            ctx.globalAlpha = 1.0;
+                                                            ctx.fillText(level.label, right - 10, yPos - 4);
+                                                        }
+                                                    });
+                                                    ctx.restore();
+                                                }
+                                            }]}
+                                        />
                                     ) : (
                                         <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 rounded-lg">No data available</div>
                                     )}
@@ -526,7 +749,7 @@ const AppDashboard = () => {
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-lg font-semibold text-yellow-600 flex items-center gap-2">
                                         <span className="w-1 h-6 bg-yellow-600 rounded-full"></span>
-                                        H2S PPM Dashboard
+                                        H2S Dashboard
                                     </h3>
                                     <button
                                         onClick={() => downloadChartAsImage(h2sPpmChartRef, 'h2s-ppm-chart')}
